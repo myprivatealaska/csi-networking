@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/gob"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -21,7 +23,7 @@ type Segment struct {
 	SourcePort      uint16
 	DestinationPort uint16
 	DataLength      uint16
-	Checksum        uint16
+	Checksum        [32]byte
 	Data            []byte
 }
 
@@ -70,15 +72,12 @@ func (c *ReliableUdpClient) SendDatagram(data []byte) {
 	err := g.Encode(raw)
 	checkErr(err)
 
-	segmBytes := buf.Bytes()
-	check := checksum(segmBytes)
-
 	segment := Segment{
-		SourcePort:      raw.SourcePort,
-		DestinationPort: raw.DestinationPort,
-		DataLength:      raw.DataLength,
-		Checksum:        check,
-		Data:            raw.Data,
+		SourcePort:      uint16(c.Port),
+		DestinationPort: uint16(c.DestinationPort),
+		DataLength:      uint16(len(data)),
+		Checksum:        sha256.Sum256(buf.Bytes()),
+		Data:            data,
 	}
 
 	var newBuf bytes.Buffer
@@ -90,8 +89,9 @@ func (c *ReliableUdpClient) SendDatagram(data []byte) {
 	err = syscall.Sendto(c.Socket, newBuf.Bytes(), 0, &syscall.SockaddrInet4{Port: c.DestinationPort})
 	checkErr(err)
 
-	// wait for ACK / NAK, retransmit if necessary
+	time.Sleep(3 * time.Second)
 
+	// wait for ACK / NAK, retransmit if necessary
 	ackSeg, err := c.Receive()
 	if err != nil {
 		if !strings.Contains(err.Error(), "Response segment decoding err") {
@@ -119,45 +119,29 @@ func (c *ReliableUdpClient) Receive() (Segment, error) {
 		return respSeg, errors.Wrap(err, "Response segment decoding err")
 	}
 
-	receivedCheck := checksum(receiveBuf[:n])
-	if receivedCheck != 0b1111111111111111 {
+	// Check checksum
+	raw := RawSegment{
+		SourcePort:      respSeg.SourcePort,
+		DestinationPort: respSeg.DestinationPort,
+		DataLength:      respSeg.DataLength,
+		Data:            respSeg.Data,
+	}
+
+	var buf bytes.Buffer
+	g := gob.NewEncoder(&buf)
+
+	err = g.Encode(raw)
+	checkErr(err)
+
+	check := sha256.Sum256(buf.Bytes())
+
+	if respSeg.Checksum != check {
 		return respSeg, errors.Wrap(err, "Response segment checksum err")
 	}
 
 	c.Logger.Info("Received a segment", zap.Any("Segment", string(respSeg.Data)))
 
 	return respSeg, nil
-}
-
-// Internet checksum
-// https://datatracker.ietf.org/doc/html/rfc1071.html
-func checksum(buf []byte) uint16 {
-	sum := uint32(0)
-
-	// (1)  Adjacent octets to be checksummed are paired to form 16-bit
-	// integers, and the 1's complement sum of these 16-bit integers is
-	// formed.
-	for ; len(buf) >= 2; buf = buf[2:] {
-		sum += uint32(buf[0])<<8 | uint32(buf[1])
-	}
-
-	// If the total length is odd, the received data is padded with one
-	// octet of zeros for computing the checksum.  This checksum may be
-	// replaced in the future.
-	if len(buf) > 0 {
-		sum += uint32(buf[0]) << 8
-	}
-
-	// On a 2's complement machine, the 1's complement sum must be
-	// computed by means of an "end around carry", i.e., any overflows
-	// from the most significant bits are added into the least
-	// significant bits. See the examples below.
-	for sum > 0xffff {
-		sum = (sum >> 16) + (sum & 0xffff)
-	}
-
-	csum := ^uint16(sum)
-	return csum
 }
 
 func checkErr(err error) {

@@ -5,7 +5,7 @@ import sys
 
 
 DROP_RATE = 0
-CORRUPTION_RATE = 0.9
+CORRUPTION_RATE = 0
 
 
 if __name__ == '__main__':

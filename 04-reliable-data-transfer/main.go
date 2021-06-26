@@ -4,15 +4,13 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-
-	"go.uber.org/zap"
 )
 
 const (
-	Proxy1EntryPort = 58627
+	Proxy1EntryPort = 49351
 	SenderPort      = 52059
 	ReceiverPort    = 52058
-	Proxy2EntryPort = 62489
+	Proxy2EntryPort = 56514
 )
 
 func main() {
@@ -36,14 +34,13 @@ func receiver(port int, sendToPort int) {
 	defer syscall.Close(c.Socket)
 
 	for {
-		received, err := c.Receive()
+		_, err := c.Receive()
 		if err != nil {
 			if !strings.Contains(err.Error(), "Response segment") {
 				checkErr(err)
 			}
 			c.SendDatagram([]byte{'N', 'A', 'K'})
 		} else {
-			c.Logger.Info("Checksum", zap.Any("Checksum", received.Checksum))
 			c.SendDatagram([]byte{'A', 'C', 'K'})
 		}
 	}
