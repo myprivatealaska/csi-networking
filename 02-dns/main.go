@@ -27,9 +27,8 @@ func main() {
 	err = syscall.Sendto(socket, messageBytes, 0, googleDnsAddr)
 	checkErr(err)
 
-	recvBuf := make([]byte, 4096)
-
 	for {
+		recvBuf := make([]byte, 4096)
 		_, _, err = syscall.Recvfrom(socket, recvBuf, 0)
 		checkErr(err)
 
